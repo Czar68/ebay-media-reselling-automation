@@ -59,6 +59,76 @@ def airtable_webhook():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/webhook/disc-image', methods=['POST'])
+def process_disc_image():
+    """Process disc photo to extract title using Perplexity Vision"""
+    try:
+        data = request.json
+        record_id = data.get('record_id')
+        attachment_url = data.get('attachment_url')
+        
+        if not record_id or not attachment_url:
+            return jsonify({'error': 'Missing record_id or attachment_url'}), 400
+        
+        # Use Perplexity Vision to extract title from disc image
+        title = extract_title_from_image(attachment_url)
+        
+        if title:
+            # Update Airtable with extracted title
+            update_airtable_record(record_id, {'Title': title})
+            
+            return jsonify({
+                'success': True,
+                'title': title,
+                'message': 'Title extracted successfully'
+            })
+        else:
+            # Mark for manual review
+            update_airtable_record(record_id, {'Status': 'Manual Review Needed'})
+            return jsonify({
+                'success': False,
+                'message': 'Could not extract title from image'
+            }), 200
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def extract_title_from_image(image_url):
+    """Use Perplexity Vision API to extract title from disc image"""
+    try:
+        url = "https://api.perplexity.ai/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "llama-3.2-11b-vision-instruct",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url}
+                    },
+                    {
+                        "type": "text",
+                        "text": "This is a photo of a CD, DVD, or video game disc. Extract the title and artist/brand from the text on the disc. Return ONLY the title in format 'Artist - Title' or 'Title' with no additional text or explanation."
+                    }
+                ]
+            }]
+        }
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        if response.status_code == 200:
+            content = response.json()['choices'][0]['message']['content'].strip()
+            # Clean up the response - remove quotes, extra whitespace
+            title = content.replace('"', '').replace("'", "").strip()
+            return title if len(title) > 3 else None
+    except:
+        pass
+    return None
+
 def research_upc(title, media_type):
     """Use Perplexity AI to find UPC"""
     try:
