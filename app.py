@@ -96,17 +96,17 @@ def process_disc_image():
 def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
         try:
-        print(f"Extracting title from image: {image_url}")
-        url = "https://api.perplexity.ai/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "llama-3.2-11b-vision-instruct",
-            "messages": [{
-                "role": "user",
-                "content": [
+            print(f"Extracting title from image: {image_url}")
+            url = "https://api.perplexity.ai/chat/completions"
+            headers = {
+                    "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+                    "Content-Type": "application/json"
+            }
+            payload = {
+                    "model": "llama-3.2-11b-vision-instruct",
+                    "messages": [{
+                        "role": "user",
+                            "content": [
                     {
                         "type": "image_url",
                         "image_url": {"url": image_url}
