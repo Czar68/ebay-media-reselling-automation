@@ -95,8 +95,7 @@ def process_disc_image():
 
 def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
-        try:
-        print(f"Extracting title from image: {image_url}")
+    try:        print(f"Extracting title from image: {image_url}")
         url = "https://api.perplexity.ai/chat/completions"
         headers = {
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
