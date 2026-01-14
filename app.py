@@ -95,37 +95,36 @@ def process_disc_image():
 
 def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
-        try:
-            print(f"Extracting title from image: {image_url}")
-            url = "https://api.perplexity.ai/chat/completions"
-            headers = {
-                    "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-                    "Content-Type": "application/json"
-            }
-            payload = {
-                    "model": "llama-3.2-11b-vision-instruct",
-                    "messages": [{
-                        "role": "user",
-                            "content": [
-                        {
-                                            "type": "image_url",
-                                            "image_url": {"url": image_url}
-                                    },
-                                                        {
-                                            "type": "text",
-                                        "text": "This is a photo of a CD, DVD, or video game disc. Extract the title and artist/brand from the text on the disc. Return ONLY the title in format 'Artist - Title' or 'Title' with no additional text or explanation."
-                                }
-                            ]
-                    }]
+    try:        print(f"Extracting title from image: {image_url}")
+        url = "https://api.perplexity.ai/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+            "Content-Type": "application/json"
         }
-                response = requests.post(url, json=payload, headers=headers, timeout=30)
-                    if response.status_code == 200:
-                            content = response.json()['choices'][0]['message']['content'].strip()
-                            title = content.replace('"', '').replace("'", "").strip()
-                            return title if len(title) > 3 else None
-            except Exception as e:
-                    print(f"Error extracting title from image: {str(e)}")
-                    return None
+        payload = {
+            "model": "llama-3.2-11b-vision-instruct",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url}
+                    },
+                    {
+                        "type": "text",
+                        "text": "This is a photo of a CD, DVD, or video game disc. Extract the title and artist/brand from the text on the disc. Return ONLY the title in format 'Artist - Title' or 'Title' with no additional text or explanation."
+                    }
+                ]
+            }]
+        }
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        if response.status_code == 200:
+            content = response.json()['choices'][0]['message']['content'].strip()
+            title = content.replace('"', '').replace("'", "").strip()
+            return title if len(title) > 3 else None
+    except Exception as e:
+        print(f"Error extracting title from image: {str(e)}")
+        return None
 
 
 
