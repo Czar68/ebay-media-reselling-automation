@@ -96,6 +96,7 @@ def process_disc_image():
 def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
     try:
+                print(f"Extracting title from image: {image_url}")
         url = "https://api.perplexity.ai/chat/completions"
         headers = {
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
@@ -125,9 +126,7 @@ def extract_title_from_image(image_url):
             # Clean up the response - remove quotes, extra whitespace
             title = content.replace('"', '').replace("'", "").strip()
             return title if len(title) > 3 else None
-    except:
-        pass
-    return None
+        print(f"Error extracting title from image: {str(e)}")    return None
 
 def research_upc(title, media_type):
     """Use Perplexity AI to find UPC"""
