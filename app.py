@@ -130,8 +130,8 @@ def extract_title_from_image(image_url):
         print(f"Error extracting title from image: {str(e)}")    return None
 
 def research_upc(title, media_type):
-    """Use Perplexity AI to
-            return None
+        """Use Perplexity AI to find UPC"""
+    try:
         url = "https://api.perplexity.ai/chat/completions"
         headers = {
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
