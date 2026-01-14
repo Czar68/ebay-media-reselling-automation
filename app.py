@@ -126,11 +126,12 @@ def extract_title_from_image(image_url):
             # Clean up the response - remove quotes, extra whitespace
             title = content.replace('"', '').replace("'", "").strip()
             return title if len(title) > 3 else None
+                except Exception as e:
         print(f"Error extracting title from image: {str(e)}")    return None
 
 def research_upc(title, media_type):
-    """Use Perplexity AI to find UPC"""
-    try:
+    """Use Perplexity AI to
+            return None
         url = "https://api.perplexity.ai/chat/completions"
         headers = {
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
