@@ -91,10 +91,49 @@ def process_disc_image():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+
+def preprocess_image_for_ocr(image_url):
+    """Download and preprocess image for better OCR results"""
+    try:
+        # Download image
+        response = requests.get(image_url, timeout=30)
+        if response.status_code != 200:
+            return None
+        
+        # Open image with PIL
+        img = Image.open(io.BytesIO(response.content))
+        
+        # Convert to RGB if needed
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Enhance contrast
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(2.0)
+        
+        # Sharpen image
+        img = img.filter(ImageFilter.SHARPEN)
+        
+        # Convert back to bytes and base64 for API
+        buffered = io.BytesIO()
+        img.save(buffered, format="JPEG", quality=95)
+        img_bytes = buffered.getvalue()
+        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+        
+        return f"data:image/jpeg;base64,{img_base64}"
+    except Exception as e:
+        print(f"Error preprocessing image: {str(e)}")
+        return image_url  # Return original URL if preprocessing fails
+
+
 def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
     try:
         print(f"Extracting title from image: {image_url}")
+                
+        # Preprocess image for better OCR
+        processed_image_url = preprocess_image_for_ocr(image_url)
         url = "https://api.perplexity.ai/chat/completions"
         headers = {
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
@@ -107,8 +146,7 @@ def extract_title_from_image(image_url):
                 "content": [
                     {
                         "type": "image_url",
-                        "image_url": {"url": image_url}
-                    },
+                            "image_url": {"url": processed_image_url}                    },
                     {
                         "type": "text",
                         "text": "This is a photo of a CD, DVD, or video game disc. Extract the title and artist/brand from the text on the disc. Return ONLY the title in format 'Artist - Title' or 'Title' with no additional text or explanation."
