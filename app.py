@@ -46,7 +46,7 @@ def airtable_webhook():
             update_data['Status'] = 'Ready to List'
         if market_value:
             update_data['Market Value'] = market_value
-            
+        
         update_airtable_record(record_id, update_data)
         
         return jsonify({
@@ -55,7 +55,6 @@ def airtable_webhook():
             'epid': epid,
             'market_value': market_value
         })
-        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -72,6 +71,7 @@ def process_disc_image():
         
         # Use Perplexity Vision to extract title from disc image
         title = extract_title_from_image(attachment_url)
+        
         if title:
             # Update Airtable with extracted title
             update_airtable_record(record_id, {'Title': title})
@@ -88,19 +88,16 @@ def process_disc_image():
                 'success': False,
                 'message': 'Could not extract title from image'
             }), 200
-    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-103
 def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
-            
     try:
-                print(f"Extracting title from image: {image_url}")
-                            url = "https://api.perplexity.ai/chat/completions"
-            headers = {
-                    "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+        print(f"Extracting title from image: {image_url}")
+        url = "https://api.perplexity.ai/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
             "Content-Type": "application/json"
         }
         payload = {
@@ -128,17 +125,14 @@ def extract_title_from_image(image_url):
         print(f"Error extracting title from image: {str(e)}")
         return None
 
-
-
 def research_upc(title, media_type):
-        """Use Perplexity AI to find UPC"""
+    """Use Perplexity AI to find UPC"""
     try:
         url = "https://api.perplexity.ai/chat/completions"
         headers = {
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
             "Content-Type": "application/json"
         }
-        
         payload = {
             "model": "llama-3.1-sonar-large-128k-online",
             "messages": [{
@@ -146,7 +140,6 @@ def research_upc(title, media_type):
                 "content": f"Find the UPC barcode number for this {media_type}: {title}. Return ONLY the UPC number with no additional text."
             }]
         }
-        
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             content = response.json()['choices'][0]['message']['content'].strip()
@@ -165,7 +158,6 @@ def find_ebay_epid(title, upc):
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
             "Content-Type": "application/json"
         }
-        
         search_query = f"{title} UPC {upc}" if upc else title
         payload = {
             "model": "llama-3.1-sonar-large-128k-online",
@@ -174,7 +166,6 @@ def find_ebay_epid(title, upc):
                 "content": f"Find the eBay EPID (eBay Product ID / catalog ID) for: {search_query}. Return ONLY the numeric EPID."
             }]
         }
-        
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             content = response.json()['choices'][0]['message']['content'].strip()
@@ -198,18 +189,15 @@ def get_market_value(title):
             'itemFilter(0).value': 'true',
             'sortOrder': 'EndTimeSoonest'
         }
-        
         response = requests.get(url, params=params, timeout=30)
         if response.status_code == 200:
             data = response.json()
             search_result = data.get('findCompletedItemsResponse', [{}])[0]
             items = search_result.get('searchResult', [{}])[0].get('item', [])
-            
             if items:
                 prices = [
                     float(item['sellingStatus'][0]['currentPrice'][0]['__value__'])
-                    for item in items[:10]
-                    if 'sellingStatus' in item
+                    for item in items[:10] if 'sellingStatus' in item
                 ]
                 return round(sum(prices) / len(prices), 2) if prices else 0
     except:
@@ -223,7 +211,6 @@ def update_airtable_record(record_id, fields):
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json"
     }
-    
     payload = {"fields": fields}
     response = requests.patch(url, json=payload, headers=headers, timeout=30)
     return response.status_code == 200
