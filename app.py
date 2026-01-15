@@ -93,7 +93,7 @@ def process_disc_image():
         return jsonify({'error': str(e)}), 500
 
 103
-    def extract_title_from_image(image_url):
+def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
             
     try:
