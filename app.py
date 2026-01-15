@@ -72,7 +72,6 @@ def process_disc_image():
         
         # Use Perplexity Vision to extract title from disc image
         title = extract_title_from_image(attachment_url)
-        
         if title:
             # Update Airtable with extracted title
             update_airtable_record(record_id, {'Title': title})
@@ -94,7 +93,7 @@ def process_disc_image():
         return jsonify({'error': str(e)}), 500
 
 103
-    _from_image(image_url):
+    def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
             
     try:
