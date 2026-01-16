@@ -59,12 +59,17 @@ def airtable_webhook():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/webhook/disc-image', methods=['POST'])
-def process_disc_image():
+def 69
+():
     """Process disc photo to extract title using Perplexity Vision"""
     try:
         data = request.json
         record_id = data.get('record_id')
         attachment_url = data.get('attachment_url')
+
+                # Clean up URL if Make.com added display text prefix
+        import re
+        attachment_url = re.sub(r'^\d+\.\s*', '', attachment_url)
         
         if not record_id or not attachment_url:
             return jsonify({'error': 'Missing record_id or attachment_url'}), 400
