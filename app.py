@@ -157,7 +157,7 @@ def extract_title_from_image(image_url):
                     },
                     {
                         "type": "text",
-                        "text": "This is a photo of a CD, DVD, or video game disc. Extract the title and artist/brand from the text on the disc. Return ONLY the title in format 'Artist - Title' or 'Title' with no additional text or explanation."
+                        "text": "Read the text on this CD, DVD, or video game disc. Extract ONLY the title exactly as it appears on the disc. Return the title in one of these formats: 'Title' or 'Artist - Title'. Do NOT include any descriptions, explanations, context, or additional information. ONLY return the exact title text you see on the disc."
                     }
                 ]
             }]
@@ -166,7 +166,9 @@ def extract_title_from_image(image_url):
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             content = response.json()['choices'][0]['message']['content'].strip()
+            # Clean up the response - remove quotes and extra whitespace
             title = content.replace('"', '').replace("'", "").strip()
+            # Only return if we got something meaningful (more than just spaces)
             return title if len(title) > 3 else None
     except Exception as e:
         print(f"Error extracting title from image: {str(e)}")
