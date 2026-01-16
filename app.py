@@ -1,4 +1,4 @@
-s from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify
 import os
 import requests
 from dotenv import load_dotenv
@@ -59,14 +59,14 @@ def airtable_webhook():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/webhook/disc-image', methods=['POST'])
-def process_disc_image()
+def process_disc_image():
     """Process disc photo to extract title using Perplexity Vision"""
     try:
         data = request.json
-        record_id = data:.get('record_id')
+        record_id = data.get('record_id')
         attachment_url = data.get('attachment_url')
-
-                # Clean up URL if Make.com added display text prefix
+        
+        # Clean up URL if Make.com added display text prefix
         import re
         attachment_url = re.sub(r'^\d+\.\s*', '', attachment_url)
         
@@ -95,8 +95,6 @@ def process_disc_image()
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
-
 def preprocess_image_for_ocr(image_url):
     """Download and preprocess image for better OCR results"""
     try:
@@ -106,6 +104,10 @@ def preprocess_image_for_ocr(image_url):
             return None
         
         # Open image with PIL
+        from PIL import Image, ImageEnhance, ImageFilter
+        import io
+        import base64
+        
         img = Image.open(io.BytesIO(response.content))
         
         # Convert to RGB if needed
@@ -130,19 +132,20 @@ def preprocess_image_for_ocr(image_url):
         print(f"Error preprocessing image: {str(e)}")
         return image_url  # Return original URL if preprocessing fails
 
-
 def extract_title_from_image(image_url):
     """Use Perplexity Vision API to extract title from disc image"""
     try:
         print(f"Extracting title from image: {image_url}")
-                
+        
         # Preprocess image for better OCR
         processed_image_url = preprocess_image_for_ocr(image_url)
+        
         url = "https://api.perplexity.ai/chat/completions"
         headers = {
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
             "Content-Type": "application/json"
         }
+        
         payload = {
             "model": "llama-3.2-11b-vision-instruct",
             "messages": [{
@@ -150,7 +153,8 @@ def extract_title_from_image(image_url):
                 "content": [
                     {
                         "type": "image_url",
-                            "image_url": {"url": processed_image_url}                    },
+                        "image_url": {"url": processed_image_url}
+                    },
                     {
                         "type": "text",
                         "text": "This is a photo of a CD, DVD, or video game disc. Extract the title and artist/brand from the text on the disc. Return ONLY the title in format 'Artist - Title' or 'Title' with no additional text or explanation."
@@ -158,6 +162,7 @@ def extract_title_from_image(image_url):
                 ]
             }]
         }
+        
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             content = response.json()['choices'][0]['message']['content'].strip()
@@ -175,6 +180,7 @@ def research_upc(title, media_type):
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
             "Content-Type": "application/json"
         }
+        
         payload = {
             "model": "llama-3.1-sonar-large-128k-online",
             "messages": [{
@@ -182,6 +188,7 @@ def research_upc(title, media_type):
                 "content": f"Find the UPC barcode number for this {media_type}: {title}. Return ONLY the UPC number with no additional text."
             }]
         }
+        
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             content = response.json()['choices'][0]['message']['content'].strip()
@@ -200,6 +207,7 @@ def find_ebay_epid(title, upc):
             "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
             "Content-Type": "application/json"
         }
+        
         search_query = f"{title} UPC {upc}" if upc else title
         payload = {
             "model": "llama-3.1-sonar-large-128k-online",
@@ -208,6 +216,7 @@ def find_ebay_epid(title, upc):
                 "content": f"Find the eBay EPID (eBay Product ID / catalog ID) for: {search_query}. Return ONLY the numeric EPID."
             }]
         }
+        
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         if response.status_code == 200:
             content = response.json()['choices'][0]['message']['content'].strip()
@@ -231,11 +240,13 @@ def get_market_value(title):
             'itemFilter(0).value': 'true',
             'sortOrder': 'EndTimeSoonest'
         }
+        
         response = requests.get(url, params=params, timeout=30)
         if response.status_code == 200:
             data = response.json()
             search_result = data.get('findCompletedItemsResponse', [{}])[0]
             items = search_result.get('searchResult', [{}])[0].get('item', [])
+            
             if items:
                 prices = [
                     float(item['sellingStatus'][0]['currentPrice'][0]['__value__'])
