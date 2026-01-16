@@ -1,274 +1,182 @@
 from flask import Flask, request, jsonify
 import os
 import requests
+import json
+import base64
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
 
-# Environment variables from .env
+# Environment variables
+PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 AIRTABLE_API_KEY = os.getenv('AIRTABLE_API_KEY')
 AIRTABLE_BASE_ID = os.getenv('AIRTABLE_BASE_ID', 'appN23V9vthSoYGe6')
 AIRTABLE_TABLE_NAME = os.getenv('AIRTABLE_TABLE_NAME', 'eBay Listings')
-PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
-EBAY_APP_ID = os.getenv('EBAY_APP_ID')
+
+def analyze_disc_image(image_url):
+    """Use Perplexity API to extract structured data from disc image"""
+    
+    prompt = """Analyze this video game disc image and extract the following information in JSON format:
+
+{
+  "game_title": "The exact game title from the disc",
+  "platform": "Gaming platform (Xbox One, PS4, PS5, Xbox 360, PS3, Nintendo Switch, Wii, Wii U, etc.)",
+  "upc": "UPC/Barcode number if visible on disc or case (numbers only, no spaces)",
+  "publisher": "Game publisher name",
+  "esrb_rating": "ESRB rating (E, E10+, T, M, AO, RP)",
+  "year": "Copyright or release year if visible",
+  "condition_notes": "Note if disc appears scratched, pristine, or has visible damage",
+  "disc_art_description": "Brief description of the artwork on the disc",
+  "ebay_title": "Create an optimized eBay title under 80 characters with format: [Game Title] - [Platform] - [Key Feature/Edition] - Disc Only",
+  "website_title": "Create a descriptive title for a website: [Game Title] for [Platform] - [Publisher] ([Year])",
+  "keywords": ["list", "of", "relevant", "eBay", "search", "keywords"]
+}
+
+If any field is not visible or determinable, use null for that field. Be precise and extract exact text from the disc."""
+    
+    try:
+        response = requests.post(
+            'https://api.perplexity.ai/chat/completions',
+            headers={
+                'Authorization': f'Bearer {PERPLEXITY_API_KEY}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'model': 'llama-3.1-sonar-large-128k-online',
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': prompt},
+                            {'type': 'image_url', 'image_url': {'url': image_url}}
+                        ]
+                    }
+                ],
+                'temperature': 0.1,
+                'max_tokens': 1000
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            
+            # Extract JSON from response (Perplexity might return JSON in code blocks)
+            if '```json' in content:
+                json_str = content.split('```json')[1].split('```')[0].strip()
+            elif '```' in content:
+                json_str = content.split('```')[1].split('```')[0].strip()
+            else:
+                json_str = content.strip()
+            
+            data = json.loads(json_str)
+            return data
+        else:
+            return {'error': f'Perplexity API error: {response.status_code}', 'details': response.text}
+            
+    except Exception as e:
+        return {'error': str(e)}
+
+def update_airtable_record(record_id, fields_data):
+    """Update Airtable record with extracted data"""
+    url = f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}/{record_id}'
+    
+    # Map extracted data to Airtable fields
+    airtable_fields = {}
+    
+    if fields_data.get('ebay_title'):
+        airtable_fields['Title'] = fields_data['ebay_title']
+    
+    if fields_data.get('upc'):
+        airtable_fields['UPC/Barcode'] = fields_data['upc']
+        airtable_fields['UPC'] = fields_data['upc']  # Update both UPC fields
+    
+    if fields_data.get('platform'):
+        airtable_fields['Platform'] = fields_data['platform']
+    
+    if fields_data.get('game_title') or fields_data.get('website_title'):
+        # Store full game info in Notes field for reference
+        notes = []
+        if fields_data.get('game_title'):
+            notes.append(f"Game: {fields_data['game_title']}")
+        if fields_data.get('website_title'):
+            notes.append(f"Website Title: {fields_data['website_title']}")
+        if fields_data.get('publisher'):
+            notes.append(f"Publisher: {fields_data['publisher']}")
+        if fields_data.get('year'):
+            notes.append(f"Year: {fields_data['year']}")
+        if fields_data.get('esrb_rating'):
+            notes.append(f"Rating: {fields_data['esrb_rating']}")
+        if fields_data.get('keywords'):
+            notes.append(f"Keywords: {', '.join(fields_data['keywords'])}")
+        
+        airtable_fields['Notes'] = '\n'.join(notes)
+    
+    # Set Media Type to Video Game
+    airtable_fields['Media Type'] = 'Video Game'
+    
+    # Set Condition to Disc Only (assuming from the images)
+    airtable_fields['Condition'] = 'Disc Only'
+    
+    try:
+        response = requests.patch(
+            url,
+            headers={
+                'Authorization': f'Bearer {AIRTABLE_API_KEY}',
+                'Content-Type': 'application/json'
+            },
+            json={'fields': airtable_fields},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            return {'success': True, 'updated_fields': airtable_fields}
+        else:
+            return {'error': f'Airtable update failed: {response.status_code}', 'details': response.text}
+            
+    except Exception as e:
+        return {'error': str(e)}
 
 @app.route('/webhook/airtable', methods=['POST'])
 def airtable_webhook():
-    """Handle new record from Airtable automation"""
+    """Handle webhook from Airtable automation"""
     try:
         data = request.json
         record_id = data.get('record_id')
-        title = data.get('title', '')
-        media_type = data.get('media_type', '')
+        image_url = data.get('image_url')
         
-        if not record_id or not title:
-            return jsonify({'error': 'Missing required fields'}), 400
+        if not record_id or not image_url:
+            return jsonify({'error': 'Missing required fields: record_id and image_url'}), 400
         
-        # Step 1: Research UPC
-        upc = research_upc(title, media_type)
+        # Step 1: Analyze the disc image
+        analysis_result = analyze_disc_image(image_url)
         
-        # Step 2: Find eBay EPID
-        epid = find_ebay_epid(title, upc) if upc else None
+        if 'error' in analysis_result:
+            return jsonify({'error': 'Image analysis failed', 'details': analysis_result}), 500
         
-        # Step 3: Get market value
-        market_value = get_market_value(title) if epid else 0
+        # Step 2: Update Airtable with extracted data
+        update_result = update_airtable_record(record_id, analysis_result)
         
-        # Step 4: Update Airtable record
-        update_data = {
-            'Status': 'UPC Found' if upc else 'UPC Research Needed'
-        }
-        if upc:
-            update_data['UPC/Barcode'] = upc
-        if epid:
-            update_data['eBay EPID'] = epid
-            update_data['Status'] = 'Ready to List'
-        if market_value:
-            update_data['Market Value'] = market_value
-        
-        update_airtable_record(record_id, update_data)
+        if 'error' in update_result:
+            return jsonify({'error': 'Airtable update failed', 'details': update_result}), 500
         
         return jsonify({
             'success': True,
-            'upc': upc,
-            'epid': epid,
-            'market_value': market_value
-        })
+            'record_id': record_id,
+            'extracted_data': analysis_result,
+            'updated_fields': update_result.get('updated_fields', {})
+        }), 200
+        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/webhook/disc-image', methods=['POST'])
-def process_disc_image():
-    """Process disc photo to extract title using Perplexity Vision"""
-    try:
-        data = request.json
-        record_id = data.get('record_id')
-        attachment_url = data.get('attachment_url')
-        
-        # Clean up URL if Make.com added display text prefix
-        import re
-        attachment_url = re.sub(r'^\d+\.\s*', '', attachment_url)
-        
-        if not record_id or not attachment_url:
-            return jsonify({'error': 'Missing record_id or attachment_url'}), 400
-        
-        # Use Perplexity Vision to extract title from disc image
-        title = extract_title_from_image(attachment_url)
-        
-        if title:
-            # Update Airtable with extracted title
-            update_airtable_record(record_id, {'Title': title})
-            
-            return jsonify({
-                'success': True,
-                'title': title,
-                'message': 'Title extracted successfully'
-            })
-        else:
-            # Mark for manual review
-            update_airtable_record(record_id, {'Status': 'Manual Review Needed'})
-            return jsonify({
-                'success': False,
-                'message': 'Could not extract title from image'
-            }), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-def preprocess_image_for_ocr(image_url):
-    """Download and preprocess image for better OCR results"""
-    try:
-        # Download image
-        response = requests.get(image_url, timeout=30)
-        if response.status_code != 200:
-            return None
-        
-        # Open image with PIL
-        from PIL import Image, ImageEnhance, ImageFilter
-        import io
-        import base64
-        
-        img = Image.open(io.BytesIO(response.content))
-        
-        # Convert to RGB if needed
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        # Enhance contrast
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(2.0)
-        
-        # Sharpen image
-        img = img.filter(ImageFilter.SHARPEN)
-        
-        # Convert back to bytes and base64 for API
-        buffered = io.BytesIO()
-        img.save(buffered, format="JPEG", quality=95)
-        img_bytes = buffered.getvalue()
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-        
-        return f"data:image/jpeg;base64,{img_base64}"
-    except Exception as e:
-        print(f"Error preprocessing image: {str(e)}")
-        return image_url  # Return original URL if preprocessing fails
-
-def extract_title_from_image(image_url):
-    """Use Perplexity Vision API to extract title from disc image"""
-    try:
-        print(f"Extracting title from image: {image_url}")
-        
-        # Preprocess image for better OCR
-        processed_image_url = preprocess_image_for_ocr(image_url)
-        
-        url = "https://api.perplexity.ai/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": "llama-3.2-11b-vision-instruct",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": processed_image_url}
-                    },
-                    {
-                        "type": "text",
-                        "text": "Read the text on this CD, DVD, or video game disc. Extract ONLY the title exactly as it appears on the disc. Return the title in one of these formats: 'Title' or 'Artist - Title'. Do NOT include any descriptions, explanations, context, or additional information. ONLY return the exact title text you see on the disc."
-                    }
-                ]
-            }]
-        }
-        
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        if response.status_code == 200:
-            content = response.json()['choices'][0]['message']['content'].strip()
-            # Clean up the response - remove quotes and extra whitespace
-            title = content.replace('"', '').replace("'", "").strip()
-            # Only return if we got something meaningful (more than just spaces)
-            return title if len(title) > 3 else None
-    except Exception as e:
-        print(f"Error extracting title from image: {str(e)}")
-        return None
-
-def research_upc(title, media_type):
-    """Use Perplexity AI to find UPC"""
-    try:
-        url = "https://api.perplexity.ai/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": "llama-3.1-sonar-large-128k-online",
-            "messages": [{
-                "role": "user",
-                "content": f"Find the UPC barcode number for this {media_type}: {title}. Return ONLY the UPC number with no additional text."
-            }]
-        }
-        
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        if response.status_code == 200:
-            content = response.json()['choices'][0]['message']['content'].strip()
-            # Extract just the UPC number
-            upc = ''.join(filter(str.isdigit, content))
-            return upc if len(upc) in [12, 13] else None
-    except:
-        pass
-    return None
-
-def find_ebay_epid(title, upc):
-    """Use Perplexity AI to find eBay EPID"""
-    try:
-        url = "https://api.perplexity.ai/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        search_query = f"{title} UPC {upc}" if upc else title
-        payload = {
-            "model": "llama-3.1-sonar-large-128k-online",
-            "messages": [{
-                "role": "user",
-                "content": f"Find the eBay EPID (eBay Product ID / catalog ID) for: {search_query}. Return ONLY the numeric EPID."
-            }]
-        }
-        
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        if response.status_code == 200:
-            content = response.json()['choices'][0]['message']['content'].strip()
-            epid = ''.join(filter(str.isdigit, content))
-            return epid if epid else None
-    except:
-        pass
-    return None
-
-def get_market_value(title):
-    """Get average market value from eBay completed listings"""
-    try:
-        url = "https://svcs.ebay.com/services/search/FindingService/v1"
-        params = {
-            'OPERATION-NAME': 'findCompletedItems',
-            'SERVICE-VERSION': '1.0.0',
-            'SECURITY-APPNAME': EBAY_APP_ID,
-            'RESPONSE-DATA-FORMAT': 'JSON',
-            'keywords': title,
-            'itemFilter(0).name': 'SoldItemsOnly',
-            'itemFilter(0).value': 'true',
-            'sortOrder': 'EndTimeSoonest'
-        }
-        
-        response = requests.get(url, params=params, timeout=30)
-        if response.status_code == 200:
-            data = response.json()
-            search_result = data.get('findCompletedItemsResponse', [{}])[0]
-            items = search_result.get('searchResult', [{}])[0].get('item', [])
-            
-            if items:
-                prices = [
-                    float(item['sellingStatus'][0]['currentPrice'][0]['__value__'])
-                    for item in items[:10] if 'sellingStatus' in item
-                ]
-                return round(sum(prices) / len(prices), 2) if prices else 0
-    except:
-        pass
-    return 0
-
-def update_airtable_record(record_id, fields):
-    """Update Airtable record with research results"""
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}/{record_id}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {"fields": fields}
-    response = requests.patch(url, json=payload, headers=headers, timeout=30)
-    return response.status_code == 200
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy', 'service': 'ebay-media-reselling-automation'}), 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
