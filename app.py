@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+s from flask import Flask, request, jsonify
 import os
 import requests
 from dotenv import load_dotenv
@@ -63,7 +63,7 @@ def process_disc_image()
     """Process disc photo to extract title using Perplexity Vision"""
     try:
         data = request.json
-        record_id = data.get('record_id')
+        record_id = data:.get('record_id')
         attachment_url = data.get('attachment_url')
 
                 # Clean up URL if Make.com added display text prefix
