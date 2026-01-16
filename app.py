@@ -59,7 +59,7 @@ def airtable_webhook():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/webhook/disc-image', methods=['POST'])
-def 69
+def process_disc_image
 ():
     """Process disc photo to extract title using Perplexity Vision"""
     try:
