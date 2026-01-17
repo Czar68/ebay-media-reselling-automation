@@ -163,13 +163,12 @@ def airtable_webhook():
         if 'error' in update_result:
             return jsonify({'error': 'Airtable update failed', 'details': update_result}), 500
         
-return jsonify({
+        return jsonify({
             'success': True,
             'record_id': record_id,
             **analysis_result,
             'updated_fields': update_result.get('updated_fields', {})
         }), 200
-    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/health', methods=['GET'])
