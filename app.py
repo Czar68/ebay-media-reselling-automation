@@ -64,16 +64,22 @@ If any field is not visible or determinable, use null for that field. Be precise
             result = response.json()
             content = result['choices'][0]['message']['content']
             
-            # Extract JSON from response (Perplexity might return JSON in code blocks)
+            # 67
+            # Extract JSON from response (Perplexity might return JSON in code blocks or plain)
             if '```json' in content:
                 json_str = content.split('```json')[1].split('```')[0].strip()
             elif '```' in content:
                 json_str = content.split('```')[1].split('```')[0].strip()
             else:
-                json_str = content.strip()
+                # Try to find JSON object directly using regex
+                import re
+                json_match = re.search(r'\{[\s\S]*\}', content)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
             
-            data = json.loads(json_str)
-            return data
+            data = json.loads(json_str)tr)
+                        return data
         else:
             return {'error': f'Perplexity API error: {response.status_code}', 'details': response.text}
             
