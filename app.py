@@ -78,7 +78,7 @@ If any field is not visible or determinable, use null for that field. Be precise
                     json_str = json_match.group(0)
                 else:
             
-            data = json.loads(json_str)tr)
+            data = json.loads(json_str)
                         return data
         else:
             return {'error': f'Perplexity API error: {response.status_code}', 'details': response.text}
