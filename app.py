@@ -70,10 +70,11 @@ If any field is not visible or determinable, use null for that field. Be precise
             content = result['choices'][0]['message']['content']
             
             # Extract JSON from response (Perplexity might return JSON in code blocks or plain)
-            if '```json' in content:
-                json_str = content.split('```json').split('```').strip()[1]
+            if '70
+            ' in content:
+                                json_str = content.split('```json')[1].split('```')[0].strip()
             elif '```' in content:
-                json_str = content.split('```')[1].split('```')[0].strip()
+                                json_str = content.split('```')[1].split('```')[0].strip()
             else:
                 # Try to find JSON object directly using regex
                 import re
