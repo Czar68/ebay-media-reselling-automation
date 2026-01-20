@@ -68,6 +68,9 @@ If any field is not visible or determinable, use null for that field. Be precise
         if response.status_code == 200:
             result = response.json()
             content = result['choices'][0]['message']['content']
+                        # Handle case where content is a list instead of string
+            if isinstance(content, list):
+                content = ' '.join(content) if content else ''
             
             # Extract JSON from response (Perplexity might return JSON in code blocks or plain)
             if '```json' in content:
