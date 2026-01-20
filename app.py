@@ -74,7 +74,7 @@ If any field is not visible or determinable, use null for that field. Be precise
                         json_str = content.split('```json')[1].split('```')[0].strip()
                             elif '```' in content:
                         json_str = content.split('```')[1].split('```')[0].strip()
-                                json_str = content.split('```')[1].split('```')[0].strip()
+                            
             else:
                 # Try to find JSON object directly using regex
                 import re
