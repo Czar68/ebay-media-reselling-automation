@@ -1,3 +1,8 @@
+"""
+EBay Media Reselling Automation - Flask API
+Automated disc image analysis with Perplexity AI integration
+Integrates with Airtable for inventory management and Make.com for webhooks
+"""
 from flask import Flask, request, jsonify
 import os
 import requests
@@ -187,3 +192,59 @@ def health_check():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
+
+# ============================================================================
+# API ENDPOINT DOCUMENTATION
+# ============================================================================
+# 
+# POST /webhook/airtable
+#   Description: Main webhook endpoint for processing disc images
+#   Required Fields:
+#     - record_id (string): Airtable record ID to update
+#     - image_url (string): URL to disc image (must be accessible from Render)
+#   Response on Success (200):
+#     - success: true
+#     - record_id: string
+#     - extracted_data: object with game_title, platform, upc, etc.
+#     - updated_fields: object with Airtable field mappings
+#   Response on Error (400/500):
+#     - error: string describing the error
+#     - details: additional error context
+#   Error Cases:
+#     - 400: Missing record_id or image_url
+#     - 500: Perplexity API error, JSON parsing error, or Airtable update error
+#
+# GET /health
+#   Description: Health check endpoint
+#   Response (200): {"status": "healthy", "service": "ebay-media-reselling-automation"}
+#
+# ============================================================================
+# ENVIRONMENT VARIABLES REQUIRED
+# ============================================================================
+#   PERPLEXITY_API_KEY - API key for Perplexity AI (sonar-pro model)
+#   AIRTABLE_API_KEY - Personal access token for Airtable
+#   AIRTABLE_BASE_ID - Base ID (default: appN23V9vthSoYGe6)
+#   AIRTABLE_TABLE_NAME - Table name (default: eBay Listings)
+#   PORT - Server port (default: 5000)
+#
+# ============================================================================
+# KNOWN ISSUES & IMPROVEMENTS
+# ============================================================================
+#   1. JSON Extraction: Perplexity may return JSON in code blocks or raw format
+#      Solution: Multiple regex patterns handle different formats
+#   
+#   2. Timeout: 30-second timeout on Perplexity API calls may be tight for large images
+#      Future: Consider increasing timeout or implementing image compression
+#   
+#   3. Airtable URL Encoding: Record IDs with special chars should be URL encoded
+#      Status: Currently using direct string interpolation (risky)
+#      Fix: Use urllib.parse.quote() for safe encoding
+#   
+#   4. Rate Limiting: No rate limiting implemented
+#      Recommendation: Add request rate limiting to prevent abuse
+#   
+#   5. Webhook Validation: No signature verification from Make.com
+#      Recommendation: Implement HMAC-SHA256 validation if provided by Make.com
+#
+# ============================================================================
