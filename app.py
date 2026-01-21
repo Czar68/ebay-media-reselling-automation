@@ -1,9 +1,8 @@
 """
-EBay Media Reselling Automation - Flask API
+eBay Media Reselling Automation - Flask API
 Automated disc image analysis with Perplexity AI integration
-Integrates with Airtable for inventory management and Make.com for webhooks
+Integrates with Airtable for inventory management and Telegram bot for disc scanning
 """
-
 from flask import Flask, request, jsonify
 import os
 import requests
@@ -12,9 +11,10 @@ import base64
 from dotenv import load_dotenv
 from json_utils import extract_json_safe, extract_json_from_response
 from debug_logging import setup_debug_logger, log_api_response, log_json_extraction, log_error_context
+from bot import handle_update
+from config import get_config_status
 
 load_dotenv()
-
 app = Flask(__name__)
 
 # Initialize debug logger
@@ -32,20 +32,19 @@ def analyze_disc_image(image_url):
     
     prompt = """Analyze this video game disc image and extract the following information in JSON format:
 {
-    "game_title": "The exact game title from the disc",
-    "platform": "Gaming platform (Xbox One, PS4, PS5, Xbox 360, PS3, Nintendo Switch, Wii, Wii U, etc.)",
-    "upc": "UPC/Barcode number if visible on disc or case (numbers only, no spaces)",
-    "publisher": "Game publisher name",
-    "esrb_rating": "ESRB rating (E, E10+, T, M, AO, RP)",
-    "year": "Copyright or release year if visible",
-    "condition_notes": "Note if disc appears scratched, pristine, or has visible damage",
-    "disc_art_description": "Brief description of the artwork on the disc",
-    "ebay_title": "Create an optimized eBay title under 80 characters with format: [Game Title] - [Platform] - [Key Feature/Edition] - Disc Only",
-    "website_title": "Create a descriptive title for a website: [Game Title] for [Platform] - [Publisher] ([Year])",
-    "keywords": ["list", "of", "relevant", "eBay", "search", "keywords"]
+ "game_title": "The exact game title from the disc",
+ "platform": "Gaming platform (Xbox One, PS4, PS5, Xbox 360, PS3, Nintendo Switch, Wii, Wii U, etc.)",
+ "upc": "UPC/Barcode number if visible on disc or case (numbers only, no spaces)",
+ "publisher": "Game publisher name",
+ "esrb_rating": "ESRB rating (E, E10+, T, M, AO, RP)",
+ "year": "Copyright or release year if visible",
+ "condition_notes": "Note if disc appears scratched, pristine, or has visible damage",
+ "disc_art_description": "Brief description of the artwork on the disc",
+ "ebay_title": "Create an optimized eBay title under 80 characters with format: [Game Title] - [Platform] - [Key Feature/Edition] - Disc Only",
+ "website_title": "Create a descriptive title for a website: [Game Title] for [Platform] - [Publisher] ([Year])",
+ "keywords": ["list", "of", "relevant", "eBay", "search", "keywords"]
 }
 If any field is not visible or determinable, use null for that field. Be precise and extract exact text from the disc."""
-
     try:
         response = requests.post(
             'https://api.perplexity.ai/chat/completions',
@@ -69,9 +68,7 @@ If any field is not visible or determinable, use null for that field. Be precise
             },
             timeout=30
         )
-
         log_api_response(response.status_code, response.json(), '/chat/completions')
-
         if response.status_code == 200:
             result = response.json()
             content = result['choices'][0]['message']['content']
@@ -90,9 +87,8 @@ If any field is not visible or determinable, use null for that field. Be precise
                 return {'error': 'Could not extract JSON from API response'}
         else:
             log_error_context('APIError', f'Perplexity API returned {response.status_code}', 
-                            {'status_code': response.status_code, 'response': response.text})
+                {'status_code': response.status_code, 'response': response.text})
             return {'error': f'Perplexity API error: {response.status_code}', 'details': response.text}
-
     except Exception as e:
         log_error_context('AnalysisException', str(e), {'image_url': image_url})
         return {'error': str(e)}
@@ -111,7 +107,7 @@ def update_airtable_record(record_id, fields_data):
     
     if fields_data.get('upc'):
         airtable_fields['UPC/Barcode'] = fields_data['upc']
-        airtable_fields['UPC'] = fields_data['upc']  # Update both UPC fields
+        airtable_fields['UPC'] = fields_data['upc'] # Update both UPC fields
     
     if fields_data.get('platform'):
         airtable_fields['Platform'] = fields_data['platform']
@@ -152,15 +148,15 @@ def update_airtable_record(record_id, fields_data):
         )
         
         log_airtable_update(AIRTABLE_TABLE_NAME, record_id, airtable_fields, 
-                          success=(response.status_code == 200))
+            success=(response.status_code == 200))
         
         if response.status_code == 200:
             return {'success': True, 'updated_fields': airtable_fields}
         else:
             log_error_context('AirtableError', f'Airtable returned {response.status_code}',
-                            {'record_id': record_id, 'response': response.text})
+                {'record_id': record_id, 'response': response.text})
             return {'error': f'Airtable update failed: {response.status_code}', 'details': response.text}
-    
+        
     except Exception as e:
         log_error_context('AirtableException', str(e), {'record_id': record_id})
         return {'error': str(e)}
@@ -176,6 +172,9 @@ def log_airtable_update(table_name, record_id, fields, success=False):
         debug_logger.debug(f"✗ Failed to update {record_id}")
 
 
+# =============================================================================
+# Legacy Airtable Webhook (Phase 1 compatibility)
+# =============================================================================
 @app.route('/webhook/airtable', methods=['POST'])
 def airtable_webhook():
     """Handle webhook from Airtable automation"""
@@ -206,16 +205,46 @@ def airtable_webhook():
             'extracted_data': analysis_result,
             'updated_fields': update_result.get('updated_fields', {})
         }), 200
-    
+        
     except Exception as e:
         log_error_context('WebhookException', str(e))
         return jsonify({'error': str(e)}), 500
 
 
+# =============================================================================
+# Telegram Bot Webhook (Phase 1 MVP)
+# =============================================================================
+@app.route('/telegram-webhook', methods=['POST'])
+def telegram_webhook():
+    """Handle incoming Telegram bot updates via webhook"""
+    try:
+        update_data = request.json
+        debug_logger.info(f"Received Telegram update: {update_data.get('update_id')}")
+        
+        # Process the update (delegate to bot module)
+        result = handle_update(update_data)
+        
+        # Always return 200 to Telegram to acknowledge receipt
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        debug_logger.error(f"Error processing Telegram update: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# Health Check and Status Endpoints
+# =============================================================================
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy', 'service': 'ebay-media-reselling-automation'}), 200
+
+
+@app.route('/status', methods=['GET'])
+def status_endpoint():
+    """Check configuration and API readiness status"""
+    config = get_config_status()
+    return jsonify(config), 200
 
 
 if __name__ == '__main__':
