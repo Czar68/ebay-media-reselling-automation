@@ -182,8 +182,7 @@ def _handle_photo(chat_id: int, message_id: int, photos: list) -> Dict[str, Any]
 🎯 Confidence: {confidence:.0%}
 
 Record ID: `{record_id}`
-Saved to Airtable ✓"""
-
+confirmation_text += f"""Saved to Airtable {record_id}"""
                     # Step 4: Create eBay listing
             logger.debug("Creating eBay listing...")
             try:
