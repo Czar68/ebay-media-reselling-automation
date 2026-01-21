@@ -8,6 +8,7 @@ from debug_logging import setup_debug_logger
 from media_analyzer import analyze_disc_image
 from database_lookup import resolve_metadata
 from airtable_handler import create_listing
+from ebay_lister import eBayLister, create_ebay_listing_from_media
 from media_models import UnifiedMediaRecord
 
 logger = setup_debug_logger()
@@ -182,6 +183,32 @@ def _handle_photo(chat_id: int, message_id: int, photos: list) -> Dict[str, Any]
 
 Record ID: `{record_id}`
 Saved to Airtable ✓"""
+
+                    # Step 4: Create eBay listing
+            logger.debug("Creating eBay listing...")
+            try:
+                ebay_listing_data = {
+                    'title': chosen_title,
+                    'description': media_record.description or f"{media_record.media_type} - {chosen_title}",
+                    'price': media_record.price or 9.99,
+                    'media_type': media_record.media_type.value,
+                    'condition': media_record.condition or 'USED_GOOD',
+                    'quantity': media_record.quantity or 1,
+                    'sku': record_id  # Use Airtable record ID as SKU
+                }
+                ebay_result = create_ebay_listing_from_media(ebay_listing_data, use_sandbox=True)
+                
+                if ebay_result.get('success'):
+                    ebay_listing_id = ebay_result.get('listing_id')
+                    ebay_url = ebay_result.get('url', '')
+                    confirmation_text += f"\n\n💰 eBay Listing Created!\nListing ID: {ebay_listing_id}\nURL: {ebay_url}"
+                    logger.info(f"eBay listing created: {ebay_listing_id}")
+                else:
+                    logger.warning(f"eBay listing creation failed: {ebay_result.get('error')}")
+                    confirmation_text += f"\n⚠️ Note: eBay listing could not be created automatically. Error: {ebay_result.get('error')}"
+            except Exception as e:
+                logger.error(f"Error creating eBay listing: {str(e)}")
+                confirmation_text += f"\n⚠️ Note: eBay listing could not be created automatically."
 
         return _send_message(chat_id, confirmation_text)
 
