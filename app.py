@@ -3,6 +3,7 @@ EBay Media Reselling Automation - Flask API
 Automated disc image analysis with Perplexity AI integration
 Integrates with Airtable for inventory management and Make.com for webhooks
 """
+
 from flask import Flask, request, jsonify
 import os
 import requests
@@ -16,33 +17,35 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# Initialize debug logger
+debug_logger = setup_debug_logger()
+
 # Environment variables
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 AIRTABLE_API_KEY = os.getenv('AIRTABLE_API_KEY')
 AIRTABLE_BASE_ID = os.getenv('AIRTABLE_BASE_ID', 'appN23V9vthSoYGe6')
 AIRTABLE_TABLE_NAME = os.getenv('AIRTABLE_TABLE_NAME', 'eBay Listings')
 
+
 def analyze_disc_image(image_url):
     """Use Perplexity API to extract structured data from disc image"""
     
     prompt = """Analyze this video game disc image and extract the following information in JSON format:
-
 {
-  "game_title": "The exact game title from the disc",
-  "platform": "Gaming platform (Xbox One, PS4, PS5, Xbox 360, PS3, Nintendo Switch, Wii, Wii U, etc.)",
-  "upc": "UPC/Barcode number if visible on disc or case (numbers only, no spaces)",
-  "publisher": "Game publisher name",
-  "esrb_rating": "ESRB rating (E, E10+, T, M, AO, RP)",
-  "year": "Copyright or release year if visible",
-  "condition_notes": "Note if disc appears scratched, pristine, or has visible damage",
-  "disc_art_description": "Brief description of the artwork on the disc",
-  "ebay_title": "Create an optimized eBay title under 80 characters with format: [Game Title] - [Platform] - [Key Feature/Edition] - Disc Only",
-  "website_title": "Create a descriptive title for a website: [Game Title] for [Platform] - [Publisher] ([Year])",
-  "keywords": ["list", "of", "relevant", "eBay", "search", "keywords"]
+    "game_title": "The exact game title from the disc",
+    "platform": "Gaming platform (Xbox One, PS4, PS5, Xbox 360, PS3, Nintendo Switch, Wii, Wii U, etc.)",
+    "upc": "UPC/Barcode number if visible on disc or case (numbers only, no spaces)",
+    "publisher": "Game publisher name",
+    "esrb_rating": "ESRB rating (E, E10+, T, M, AO, RP)",
+    "year": "Copyright or release year if visible",
+    "condition_notes": "Note if disc appears scratched, pristine, or has visible damage",
+    "disc_art_description": "Brief description of the artwork on the disc",
+    "ebay_title": "Create an optimized eBay title under 80 characters with format: [Game Title] - [Platform] - [Key Feature/Edition] - Disc Only",
+    "website_title": "Create a descriptive title for a website: [Game Title] for [Platform] - [Publisher] ([Year])",
+    "keywords": ["list", "of", "relevant", "eBay", "search", "keywords"]
 }
-
 If any field is not visible or determinable, use null for that field. Be precise and extract exact text from the disc."""
-    
+
     try:
         response = requests.post(
             'https://api.perplexity.ai/chat/completions',
@@ -66,40 +69,38 @@ If any field is not visible or determinable, use null for that field. Be precise
             },
             timeout=30
         )
-        
+
+        log_api_response(response.status_code, response.json(), '/chat/completions')
+
         if response.status_code == 200:
             result = response.json()
             content = result['choices'][0]['message']['content']
-                        # Handle case where content is a list instead of string
-            if isinstance(content, list):
-                content = ' '.join(content) if content else ''
             
-            # Extract JSON from response (Perplexity might return JSON in code blocks or plain)
-            if '```json' in content:
-                        json_str = content.split('```json')[1].split('```')[0].strip()
-                            elif '```' in content:
-                        json_str = content.split('```')[1].split('```')[0].strip()
-                            
+            # Log extraction attempt
+            log_json_extraction(content, "Perplexity API response")
+            
+            # Use the robust JSON extraction utility
+            data = extract_json_safe(content, {})
+            
+            if data:
+                log_json_extraction(data, "extract_json_safe", success=True)
+                return data
             else:
-                # Try to find JSON object directly using regex
-                import re
-                json_match = re.search(r'\{[\s\S]*\}', content)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    # If no JSON found, return error
-                    return {'error': 'Could not extract JSON from API response'}
-            
-            data = json.loads(json_str)
-            return data
+                log_json_extraction(content, "extract_json_safe", error="Could not parse JSON")
+                return {'error': 'Could not extract JSON from API response'}
         else:
+            log_error_context('APIError', f'Perplexity API returned {response.status_code}', 
+                            {'status_code': response.status_code, 'response': response.text})
             return {'error': f'Perplexity API error: {response.status_code}', 'details': response.text}
-            
+
     except Exception as e:
+        log_error_context('AnalysisException', str(e), {'image_url': image_url})
         return {'error': str(e)}
+
 
 def update_airtable_record(record_id, fields_data):
     """Update Airtable record with extracted data"""
+    
     url = f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}/{record_id}'
     
     # Map extracted data to Airtable fields
@@ -150,17 +151,35 @@ def update_airtable_record(record_id, fields_data):
             timeout=10
         )
         
+        log_airtable_update(AIRTABLE_TABLE_NAME, record_id, airtable_fields, 
+                          success=(response.status_code == 200))
+        
         if response.status_code == 200:
             return {'success': True, 'updated_fields': airtable_fields}
         else:
+            log_error_context('AirtableError', f'Airtable returned {response.status_code}',
+                            {'record_id': record_id, 'response': response.text})
             return {'error': f'Airtable update failed: {response.status_code}', 'details': response.text}
-            
+    
     except Exception as e:
+        log_error_context('AirtableException', str(e), {'record_id': record_id})
         return {'error': str(e)}
+
+
+def log_airtable_update(table_name, record_id, fields, success=False):
+    """Log Airtable update (wrapper for consistency)"""
+    debug_logger.debug(f"Airtable Update: {table_name} - Record {record_id}")
+    debug_logger.debug(f"Fields being updated: {list(fields.keys())}")
+    if success:
+        debug_logger.debug(f"✓ Successfully updated {record_id}")
+    else:
+        debug_logger.debug(f"✗ Failed to update {record_id}")
+
 
 @app.route('/webhook/airtable', methods=['POST'])
 def airtable_webhook():
     """Handle webhook from Airtable automation"""
+    
     try:
         data = request.json
         record_id = data.get('record_id')
@@ -187,70 +206,18 @@ def airtable_webhook():
             'extracted_data': analysis_result,
             'updated_fields': update_result.get('updated_fields', {})
         }), 200
-        
+    
     except Exception as e:
+        log_error_context('WebhookException', str(e))
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    """Health check endpoint"""
     return jsonify({'status': 'healthy', 'service': 'ebay-media-reselling-automation'}), 200
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-
-
-# ============================================================================
-# API ENDPOINT DOCUMENTATION
-# ============================================================================
-# 
-# POST /webhook/airtable
-#   Description: Main webhook endpoint for processing disc images
-#   Required Fields:
-#     - record_id (string): Airtable record ID to update
-#     - image_url (string): URL to disc image (must be accessible from Render)
-#   Response on Success (200):
-#     - success: true
-#     - record_id: string
-#     - extracted_data: object with game_title, platform, upc, etc.
-#     - updated_fields: object with Airtable field mappings
-#   Response on Error (400/500):
-#     - error: string describing the error
-#     - details: additional error context
-#   Error Cases:
-#     - 400: Missing record_id or image_url
-#     - 500: Perplexity API error, JSON parsing error, or Airtable update error
-#
-# GET /health
-#   Description: Health check endpoint
-#   Response (200): {"status": "healthy", "service": "ebay-media-reselling-automation"}
-#
-# ============================================================================
-# ENVIRONMENT VARIABLES REQUIRED
-# ============================================================================
-#   PERPLEXITY_API_KEY - API key for Perplexity AI (sonar-pro model)
-#   AIRTABLE_API_KEY - Personal access token for Airtable
-#   AIRTABLE_BASE_ID - Base ID (default: appN23V9vthSoYGe6)
-#   AIRTABLE_TABLE_NAME - Table name (default: eBay Listings)
-#   PORT - Server port (default: 5000)
-#
-# ============================================================================
-# KNOWN ISSUES & IMPROVEMENTS
-# ============================================================================
-#   1. JSON Extraction: Perplexity may return JSON in code blocks or raw format
-#      Solution: Multiple regex patterns handle different formats
-#   
-#   2. Timeout: 30-second timeout on Perplexity API calls may be tight for large images
-#      Future: Consider increasing timeout or implementing image compression
-#   
-#   3. Airtable URL Encoding: Record IDs with special chars should be URL encoded
-#      Status: Currently using direct string interpolation (risky)
-#      Fix: Use urllib.parse.quote() for safe encoding
-#   
-#   4. Rate Limiting: No rate limiting implemented
-#      Recommendation: Add request rate limiting to prevent abuse
-#   
-#   5. Webhook Validation: No signature verification from Make.com
-#      Recommendation: Implement HMAC-SHA256 validation if provided by Make.com
-#
-# ============================================================================
