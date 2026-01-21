@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Telegram bot handler module.
 Receives disc images via Telegram, orchestrates analysis and cataloging.
 """
