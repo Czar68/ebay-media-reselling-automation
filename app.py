@@ -9,6 +9,8 @@ import requests
 import json
 import base64
 from dotenv import load_dotenv
+from json_utils import extract_json_safe, extract_json_from_response
+from debug_logging import setup_debug_logger, log_api_response, log_json_extraction, log_error_context
 
 load_dotenv()
 
