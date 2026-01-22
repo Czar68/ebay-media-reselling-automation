@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""eBay Market Research Module"""
+"""eBay Market Research Module - Extract sale price + shipping cost"""
 
 import logging
 from typing import List, Dict, Optional, Tuple
@@ -43,6 +43,7 @@ class eBayResearcher:
         return self.driver
     
     def search_ebay_sold_listings(self, query: str, category: str = 'video_game', max_results: int = 50) -> List[float]:
+        """Search eBay and extract TOTAL PRICE (sale price + shipping)"""
         try:
             logger.info(f'Searching eBay for: {query}')
             if not self.driver:
@@ -55,7 +56,7 @@ class eBayResearcher:
             self.driver.get(full_url)
             wait = WebDriverWait(self.driver, 15)
             wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, '.s-item')))
-            prices = self._extract_prices(max_results)
+            prices = self._extract_total_prices(max_results)
             return prices if prices else []
         except TimeoutException:
             logger.error('Timeout waiting for eBay page to load')
@@ -64,41 +65,75 @@ class eBayResearcher:
             logger.error(f'Error searching eBay: {str(e)}')
             return []
     
-    def _extract_prices(self, max_results: int) -> List[float]:
+    def _extract_total_prices(self, max_results: int) -> List[float]:
+        """Extract TOTAL PRICE (sale price + shipping) from each listing"""
         prices = []
         try:
             page_html = self.driver.page_source
             soup = BeautifulSoup(page_html, 'html.parser')
             listings = soup.find_all('div', {'class': 's-item'})
+            
             for listing in listings[:max_results]:
                 try:
+                    # Get sale price
                     price_elem = listing.find('span', {'class': 's-price'})
-                    if price_elem:
-                        price_text = price_elem.get_text(strip=True)
-                        price_clean = price_text.replace('$', '').replace(',', '').strip()
-                        if ' to ' in price_clean:
-                            price_clean = price_clean.split(' to ')[0].strip()
-                        try:
-                            price = float(price_clean)
-                            if 0.99 < price < 500:
-                                prices.append(price)
-                        except ValueError:
-                            continue
-                except Exception:
+                    if not price_elem:
+                        continue
+                    
+                    price_text = price_elem.get_text(strip=True)
+                    price_clean = price_text.replace('$', '').replace(',', '').strip()
+                    
+                    if ' to ' in price_clean:
+                        price_clean = price_clean.split(' to ')[0].strip()
+                    
+                    try:
+                        sale_price = float(price_clean)
+                    except ValueError:
+                        continue
+                    
+                    # Get shipping cost
+                    shipping_elem = listing.find('span', {'class': 's-shipping'})
+                    shipping_cost = 0.0
+                    if shipping_elem:
+                        shipping_text = shipping_elem.get_text(strip=True).lower()
+                        if 'free' in shipping_text:
+                            shipping_cost = 0.0
+                        else:
+                            # Extract shipping price
+                            try:
+                                shipping_clean = shipping_text.replace('$', '').replace(',', '').split()[0]
+                                shipping_cost = float(shipping_clean)
+                            except (ValueError, IndexError):
+                                shipping_cost = 0.0
+                    
+                    # Calculate total price
+                    total_price = sale_price + shipping_cost
+                    
+                    # Only include reasonable prices
+                    if 0.99 < total_price < 500:
+                        prices.append(total_price)
+                        logger.debug(f'Found: Sale ${sale_price:.2f} + Shipping ${shipping_cost:.2f} = Total ${total_price:.2f}')
+                        
+                except Exception as e:
+                    logger.debug(f'Error extracting price: {str(e)}')
                     continue
+            
             return prices
         except Exception as e:
             logger.error(f'Error parsing page HTML: {str(e)}')
             return []
     
     def calculate_median_price(self, prices: List[float]) -> Optional[Tuple[float, Dict]]:
+        """Calculate median price and statistics"""
         if not prices or len(prices) < 3:
             logger.warning(f'Insufficient price data: {len(prices)} prices')
             return None
+        
         try:
             median = statistics.median(prices)
             mean = statistics.mean(prices)
             stdev = statistics.stdev(prices) if len(prices) > 1 else 0
+            
             stats = {
                 'median': round(median, 2),
                 'mean': round(mean, 2),
@@ -106,21 +141,28 @@ class eBayResearcher:
                 'min': round(min(prices), 2),
                 'max': round(max(prices), 2),
                 'count': len(prices),
+                'note': 'Total price includes sale price + shipping cost paid by buyers',
                 'timestamp': datetime.utcnow().isoformat()
             }
-            logger.info(f'Price statistics: {stats}')
+            
+            logger.info(f'Price statistics (total paid): {stats}')
             return (median, stats)
         except Exception as e:
             logger.error(f'Error calculating statistics: {str(e)}')
             return None
     
     def research_category(self, query: str, category: str = 'video_game') -> Dict:
+        """Complete research for a category/item"""
         logger.info(f'Starting research for: {query} ({category})')
+        
         prices = self.search_ebay_sold_listings(query, category)
+        
         if not prices:
             logger.warning(f'No prices found for: {query}')
             return {'query': query, 'category': category, 'status': 'failed', 'message': 'No sold listings found', 'timestamp': datetime.utcnow().isoformat()}
+        
         result = self.calculate_median_price(prices)
+        
         if result:
             median, stats = result
             research_data = {'query': query, 'category': category, 'status': 'success', 'median_price': median, 'statistics': stats, 'prices_collected': prices[:10], 'timestamp': datetime.utcnow().isoformat()}
@@ -144,6 +186,7 @@ class eBayResearcher:
         self.cleanup()
 
 def research_item_pricing(query: str, category: str = 'video_game', headless: bool = True) -> Dict:
+    """Convenience function to research an item's pricing (includes shipping)"""
     researcher = eBayResearcher(headless=headless)
     try:
         result = researcher.research_category(query, category)
@@ -153,6 +196,7 @@ def research_item_pricing(query: str, category: str = 'video_game', headless: bo
 
 if __name__ == '__main__':
     import sys
+    
     if len(sys.argv) > 1:
         query = sys.argv[1]
         category = sys.argv[2] if len(sys.argv) > 2 else 'video_game'
