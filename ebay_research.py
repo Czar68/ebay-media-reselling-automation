@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""eBay Market Research Module - Extract sale price + shipping cost"""
+"""eBay Market Research Module - Search by UPC for exact matches"""
 
 import logging
 from typing import List, Dict, Optional, Tuple
@@ -42,22 +42,51 @@ class eBayResearcher:
         self.driver.set_page_load_timeout(30)
         return self.driver
     
-    def search_ebay_sold_listings(self, query: str, category: str = 'video_game', max_results: int = 50) -> List[float]:
-        """Search eBay and extract TOTAL PRICE (sale price + shipping)"""
+    def search_ebay_sold_listings(self, query: str, category: str = 'video_game', max_results: int = 50, is_upc: bool = False) -> List[float]:
+        """
+        Search eBay US only, used items, sold listings. 
+        Extract TOTAL PRICE (sale price + shipping)
+        
+        Args:
+            query: UPC code or keyword search
+            category: video_game, dvd, music_cd
+            max_results: Number of listings to analyze
+            is_upc: If True, treats query as UPC code
+        """
         try:
-            logger.info(f'Searching eBay for: {query}')
+            search_type = "UPC" if is_upc else "Keyword"
+            logger.info(f'Searching eBay by {search_type}: {query}')
+            logger.info('Filters: US Only, Used, Sold Items')
+            
             if not self.driver:
                 self._setup_driver()
+            
             search_url = f"{self.BASE_URL}{self.SEARCH_ENDPOINT}"
-            params = {'_nkw': query, 'LH_Sold': '1', 'LH_Complete': '1', '_sop': '10'}
+            params = {
+                '_nkw': query,
+                'LH_Sold': '1',              # Sold items only
+                'LH_Complete': '1',          # Completed listings
+                '_sop': '10',                # Sort by newest
+                'LH_ItemCondition': '3000',  # Used condition
+                'LH_PrefLocation': '1'       # US Only
+            }
+            
+            # If UPC, add parameter for exact matching
+            if is_upc:
+                params['_ssn'] = 'UPC'  # Search by UPC
+                logger.info(f'UPC Search - Searching for exact UPC: {query}')
+            
             param_str = '&'.join([f'{k}={v}' for k, v in params.items()])
             full_url = f"{search_url}?{param_str}"
             logger.info(f'Navigating to: {full_url}')
+            
             self.driver.get(full_url)
             wait = WebDriverWait(self.driver, 15)
             wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, '.s-item')))
+            
             prices = self._extract_total_prices(max_results)
             return prices if prices else []
+            
         except TimeoutException:
             logger.error('Timeout waiting for eBay page to load')
             return []
@@ -99,14 +128,13 @@ class eBayResearcher:
                         if 'free' in shipping_text:
                             shipping_cost = 0.0
                         else:
-                            # Extract shipping price
                             try:
                                 shipping_clean = shipping_text.replace('$', '').replace(',', '').split()[0]
                                 shipping_cost = float(shipping_clean)
                             except (ValueError, IndexError):
                                 shipping_cost = 0.0
                     
-                    # Calculate total price
+                    # Calculate total price (what buyer paid)
                     total_price = sale_price + shipping_cost
                     
                     # Only include reasonable prices
@@ -118,6 +146,7 @@ class eBayResearcher:
                     logger.debug(f'Error extracting price: {str(e)}')
                     continue
             
+            logger.info(f'Extracted {len(prices)} prices from listings')
             return prices
         except Exception as e:
             logger.error(f'Error parsing page HTML: {str(e)}')
@@ -141,36 +170,61 @@ class eBayResearcher:
                 'min': round(min(prices), 2),
                 'max': round(max(prices), 2),
                 'count': len(prices),
-                'note': 'Total price includes sale price + shipping cost paid by buyers',
+                'note': 'Total price = sale price + shipping (what buyers actually paid)',
+                'filters': 'US Only, Used condition, Sold items',
                 'timestamp': datetime.utcnow().isoformat()
             }
             
-            logger.info(f'Price statistics (total paid): {stats}')
+            logger.info(f'Price statistics (total paid by buyers): {stats}')
             return (median, stats)
         except Exception as e:
             logger.error(f'Error calculating statistics: {str(e)}')
             return None
     
-    def research_category(self, query: str, category: str = 'video_game') -> Dict:
+    def research_category(self, query: str, category: str = 'video_game', is_upc: bool = False) -> Dict:
         """Complete research for a category/item"""
-        logger.info(f'Starting research for: {query} ({category})')
+        search_type = "UPC" if is_upc else "Keyword"
+        logger.info(f'Starting {search_type} research for: {query} ({category})')
         
-        prices = self.search_ebay_sold_listings(query, category)
+        prices = self.search_ebay_sold_listings(query, category, is_upc=is_upc)
         
         if not prices:
             logger.warning(f'No prices found for: {query}')
-            return {'query': query, 'category': category, 'status': 'failed', 'message': 'No sold listings found', 'timestamp': datetime.utcnow().isoformat()}
+            return {
+                'query': query,
+                'category': category,
+                'search_type': search_type,
+                'status': 'failed',
+                'message': 'No sold listings found',
+                'timestamp': datetime.utcnow().isoformat()
+            }
         
         result = self.calculate_median_price(prices)
         
         if result:
             median, stats = result
-            research_data = {'query': query, 'category': category, 'status': 'success', 'median_price': median, 'statistics': stats, 'prices_collected': prices[:10], 'timestamp': datetime.utcnow().isoformat()}
+            research_data = {
+                'query': query,
+                'category': category,
+                'search_type': search_type,
+                'status': 'success',
+                'median_price': median,
+                'statistics': stats,
+                'prices_collected': prices[:10],
+                'timestamp': datetime.utcnow().isoformat()
+            }
             self.research_history.append(research_data)
             self.session_prices[query] = median
             return research_data
         else:
-            return {'query': query, 'category': category, 'status': 'failed', 'message': 'Could not calculate statistics', 'timestamp': datetime.utcnow().isoformat()}
+            return {
+                'query': query,
+                'category': category,
+                'search_type': search_type,
+                'status': 'failed',
+                'message': 'Could not calculate statistics',
+                'timestamp': datetime.utcnow().isoformat()
+            }
     
     def cleanup(self):
         if self.driver:
@@ -185,11 +239,11 @@ class eBayResearcher:
     def __del__(self):
         self.cleanup()
 
-def research_item_pricing(query: str, category: str = 'video_game', headless: bool = True) -> Dict:
-    """Convenience function to research an item's pricing (includes shipping)"""
+def research_item_pricing(query: str, category: str = 'video_game', headless: bool = True, is_upc: bool = False) -> Dict:
+    """Convenience function to research an item's pricing (US only, used, sold, includes shipping)"""
     researcher = eBayResearcher(headless=headless)
     try:
-        result = researcher.research_category(query, category)
+        result = researcher.research_category(query, category, is_upc=is_upc)
         return result
     finally:
         researcher.cleanup()
@@ -200,9 +254,17 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         query = sys.argv[1]
         category = sys.argv[2] if len(sys.argv) > 2 else 'video_game'
-        result = research_item_pricing(query, category, headless=False)
+        is_upc = '--upc' in sys.argv
+        
+        search_type = "UPC" if is_upc else "Keyword"
+        print(f'Searching eBay by {search_type}: {query}')
+        
+        result = research_item_pricing(query, category, headless=False, is_upc=is_upc)
         import json
         print(json.dumps(result, indent=2))
     else:
-        print('Usage: python ebay_research.py "search query" [category]')
+        print('Usage: python ebay_research.py "search query" [category] [--upc]')
         print('Categories: video_game, dvd, music_cd')
+        print('Example UPC search: python ebay_research.py "0012569859324" dvd --upc')
+        print('Example Keyword search: python ebay_research.py "Avatar DVD" dvd')
+
