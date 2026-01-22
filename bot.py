@@ -13,16 +13,12 @@ from ebay_lister import eBayLister, create_ebay_listing_from_media
 from media_models import UnifiedMediaRecord
 
 logger = setup_debug_logger()
-
 TELEGRAM_API_BASE = "https://api.telegram.org"
-
 
 def handle_update(update_json: Dict[str, Any]) -> Dict[str, Any]:
     """Main handler for incoming Telegram updates.
-
     Args:
         update_json: Telegram update object (from webhook POST body).
-
     Returns:
         Dict with 'success' and response details.
     """
@@ -31,15 +27,15 @@ def handle_update(update_json: Dict[str, Any]) -> Dict[str, Any]:
         if "message" not in update_json:
             logger.debug(f"Ignoring non-message update: {update_json.get('update_id')}")
             return {"success": True, "ignored": True}
-
+        
         message = update_json["message"]
         chat_id = message.get("chat", {}).get("id")
         message_id = message.get("message_id")
-
+        
         if not chat_id:
             logger.warning("No chat_id in update")
             return {"success": False, "error": "No chat_id"}
-
+        
         # Handle different message types
         if "text" in message:
             text = message["text"]
@@ -51,17 +47,14 @@ def handle_update(update_json: Dict[str, Any]) -> Dict[str, Any]:
                 return _handle_status(chat_id, message_id)
             else:
                 return _send_message(chat_id, "I analyze disc images. Send me a photo of a game, movie, or music disc!")
-
         elif "photo" in message:
             return _handle_photo(chat_id, message_id, message["photo"])
-
         else:
             return _send_message(chat_id, "Please send a disc image or use /help for commands.")
-
+    
     except Exception as e:
         logger.error(f"Error handling update: {str(e)}")
         return {"success": False, "error": str(e)}
-
 
 def _handle_start(chat_id: int, message_id: int) -> Dict[str, Any]:
     """Handle /start command."""
@@ -75,7 +68,6 @@ Commands:
 /help - Show available commands
 /status - Check API connection status"""
     return _send_message(chat_id, welcome_text)
-
 
 def _handle_help(chat_id: int, message_id: int) -> Dict[str, Any]:
     """Handle /help command."""
@@ -99,7 +91,6 @@ Supported media:
 Command /status to check if all APIs are ready."""
     return _send_message(chat_id, help_text)
 
-
 def _handle_status(chat_id: int, message_id: int) -> Dict[str, Any]:
     """Handle /status command."""
     config = get_config_status()
@@ -116,14 +107,11 @@ APIs Ready:
 {'✅' if config['telegram_ready'] else '❌'} Telegram (this bot)
 
 Using stubs: {config['use_stub_analyzer'] or config['use_stub_lookups']}
-
 Ready to analyze discs: {'Yes ✅' if not (config['use_stub_analyzer'] and config['use_stub_lookups']) else 'Partial (using test data)'}"""
     return _send_message(chat_id, status_text)
 
-
 def _handle_photo(chat_id: int, message_id: int, photos: list) -> Dict[str, Any]:
     """Handle incoming photo message.
-
     Args:
         chat_id: Telegram chat ID.
         message_id: Telegram message ID.
@@ -132,48 +120,48 @@ def _handle_photo(chat_id: int, message_id: int, photos: list) -> Dict[str, Any]
     if not TELEGRAM_BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN not set")
         return _send_message(chat_id, "⚠️ Bot not configured. Check TELEGRAM_BOT_TOKEN.")
-
+    
     try:
         # Get the largest photo
         photo = max(photos, key=lambda p: p.get("file_size", 0))
         file_id = photo.get("file_id")
-
+        
         if not file_id:
             return _send_message(chat_id, "❌ Could not process image. Please try again.")
-
+        
         # Download image from Telegram
         logger.debug(f"Downloading image {file_id}...")
         image_bytes = _download_file(file_id)
         if not image_bytes:
             return _send_message(chat_id, "❌ Failed to download image. Please try again.")
-
+        
         # Send "typing" indicator
         _send_chat_action(chat_id, "typing")
-
+        
         # Step 1: Analyze image
         logger.debug("Analyzing image...")
         analyzer_result = analyze_disc_image(image_bytes)
         if "error" in analyzer_result:
             logger.error(f"Analysis failed: {analyzer_result['error']}")
             return _send_message(chat_id, f"❌ Analysis failed: {analyzer_result['error']}")
-
+        
         # Step 2: Resolve metadata
         logger.debug("Resolving metadata...")
         media_record = resolve_metadata(analyzer_result)
-
+        
         # Step 3: Create Airtable listing
         logger.debug("Creating Airtable record...")
         airtable_result = create_listing(media_record)
         if "error" in airtable_result:
             logger.error(f"Airtable creation failed: {airtable_result['error']}")
             return _send_message(chat_id, f"❌ Failed to save to inventory: {airtable_result['error']}")
-
+        
         # Step 4: Send confirmation
         record_id = airtable_result.get("record_id", "unknown")
         confidence = analyzer_result.get("confidence", 0)
         title_candidates = analyzer_result.get("title_candidates", [])
         chosen_title = media_record.title
-
+        
         confirmation_text = f"""✅ Disc Cataloged!
 
 📚 Title: {chosen_title}
@@ -183,46 +171,44 @@ def _handle_photo(chat_id: int, message_id: int, photos: list) -> Dict[str, Any]
 🎯 Confidence: {confidence:.0%}
 
 Record ID: `{record_id}`
-confirmation_text += f"""Saved to Airtable {record_id}"""
-                    # Step 4: Create eBay listing
-            logger.debug("Creating eBay listing...")
-            try:
-                ebay_listing_data = {
-                    'title': chosen_title,
-                    'description': media_record.description or f"{media_record.media_type} - {chosen_title}",
-                    'price': media_record.price or 9.99,
-                    'media_type': media_record.media_type.value,
-                    'condition': media_record.condition or 'USED_GOOD',
-                    'quantity': media_record.quantity or 1,
-                    'sku': record_id  # Use Airtable record ID as SKU
-                }
-                ebay_result = create_ebay_listing_from_media(ebay_listing_data, use_sandbox=True)
-                
-                if ebay_result.get('success'):
-                    ebay_listing_id = ebay_result.get('listing_id')
-                    ebay_url = ebay_result.get('url', '')
-                    confirmation_text += f"\n\n💰 eBay Listing Created!\nListing ID: {ebay_listing_id}\nURL: {ebay_url}"
-                    logger.info(f"eBay listing created: {ebay_listing_id}")
-                else:
-                    logger.warning(f"eBay listing creation failed: {ebay_result.get('error')}")
-                    confirmation_text += f"\n⚠️ Note: eBay listing could not be created automatically. Error: {ebay_result.get('error')}"
-            except Exception as e:
-                logger.error(f"Error creating eBay listing: {str(e)}")
-                confirmation_text += f"\n⚠️ Note: eBay listing could not be created automatically."
-
+Saved to Airtable"""
+        
+        # Step 5: Create eBay listing
+        logger.debug("Creating eBay listing...")
+        try:
+            ebay_listing_data = {
+                'title': chosen_title,
+                'description': media_record.description or f"{media_record.media_type} - {chosen_title}",
+                'price': media_record.price or 9.99,
+                'media_type': media_record.media_type.value,
+                'condition': media_record.condition or 'USED_GOOD',
+                'quantity': media_record.quantity or 1,
+                'sku': record_id  # Use Airtable record ID as SKU
+            }
+            ebay_result = create_ebay_listing_from_media(ebay_listing_data, use_sandbox=True)
+            
+            if ebay_result.get('success'):
+                ebay_listing_id = ebay_result.get('listing_id')
+                ebay_url = ebay_result.get('url', '')
+                confirmation_text += f"\n\n💰 eBay Listing Created!\nListing ID: {ebay_listing_id}\nURL: {ebay_url}"
+                logger.info(f"eBay listing created: {ebay_listing_id}")
+            else:
+                logger.warning(f"eBay listing creation failed: {ebay_result.get('error')}")
+                confirmation_text += f"\n⚠️ Note: eBay listing could not be created automatically. Error: {ebay_result.get('error')}"
+        except Exception as e:
+            logger.error(f"Error creating eBay listing: {str(e)}")
+            confirmation_text += f"\n⚠️ Note: eBay listing could not be created automatically."
+        
         return _send_message(chat_id, confirmation_text)
-
+    
     except Exception as e:
         logger.error(f"Error handling photo: {str(e)}")
         return _send_message(chat_id, f"❌ Error: {str(e)}")
 
-
 def _download_file(file_id: str) -> Optional[bytes]:
     """Download a file from Telegram.
-
     Args:
         file_id: Telegram file ID.
-
     Returns:
         File bytes or None if failed.
     """
@@ -233,39 +219,37 @@ def _download_file(file_id: str) -> Optional[bytes]:
         if response.status_code != 200:
             logger.error(f"Failed to get file info: {response.text}")
             return None
-
+        
         file_path = response.json().get("result", {}).get("file_path")
         if not file_path:
             logger.error("No file_path in response")
             return None
-
+        
         # Download file
         file_url = f"{TELEGRAM_API_BASE}/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
         file_response = requests.get(file_url, timeout=30)
         if file_response.status_code != 200:
             logger.error(f"Failed to download file: {file_response.status_code}")
             return None
-
+        
         return file_response.content
+    
     except Exception as e:
         logger.error(f"Error downloading file: {str(e)}")
         return None
 
-
 def _send_message(chat_id: int, text: str) -> Dict[str, Any]:
     """Send a text message to Telegram.
-
     Args:
         chat_id: Telegram chat ID.
         text: Message text.
-
     Returns:
         Result dict with 'success' status.
     """
     if not TELEGRAM_BOT_TOKEN:
         logger.warning(f"Not sending message (no token): {text}")
         return {"success": True, "simulated": True}
-
+    
     try:
         url = f"{TELEGRAM_API_BASE}/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
@@ -274,35 +258,35 @@ def _send_message(chat_id: int, text: str) -> Dict[str, Any]:
             "parse_mode": "Markdown"
         }
         response = requests.post(url, json=payload, timeout=10)
+        
         if response.status_code == 200:
             logger.debug(f"Message sent to {chat_id}")
             return {"success": True}
         else:
             logger.error(f"Failed to send message: {response.text}")
             return {"success": False, "error": response.text}
+    
     except Exception as e:
         logger.error(f"Error sending message: {str(e)}")
         return {"success": False, "error": str(e)}
 
-
 def _send_chat_action(chat_id: int, action: str) -> Dict[str, Any]:
     """Send a chat action (typing, upload_photo, etc.).
-
     Args:
         chat_id: Telegram chat ID.
         action: Action type (typing, upload_photo, etc.)
-
     Returns:
         Result dict with 'success' status.
     """
     if not TELEGRAM_BOT_TOKEN:
         return {"success": True, "simulated": True}
-
+    
     try:
         url = f"{TELEGRAM_API_BASE}/bot{TELEGRAM_BOT_TOKEN}/sendChatAction"
         payload = {"chat_id": chat_id, "action": action}
         response = requests.post(url, json=payload, timeout=10)
         return {"success": response.status_code == 200}
+    
     except Exception as e:
         logger.warning(f"Error sending chat action: {str(e)}")
         return {"success": False}
