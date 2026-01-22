@@ -142,4 +142,37 @@ def main():
     calc = PriceCalculator(args.media_type, args.condition, args.cog)
     
     logger.info(f'Calculating prices for {args.media_type} ({args.condition})')
-    logger.info(f'
+    logger.info(f'Cost of goods: ${args.cog:.2f}')
+    logger.info(f'Shipping cost: ${calc.get_shipping_cost():.2f}')
+    
+    if args.median_price:
+        median = args.median_price
+        logger.info(f'Using manual median price: ${median:.2f}')
+    elif args.search_query:
+        median = calc.research_median_price(args.search_query)
+        if not median:
+            logger.error('Failed to research median price')
+            return
+    else:
+        logger.error('Must provide either --median-price or --search-query')
+        return
+    
+    list_price = calc.calculate_list_price(median, 0.10)
+    offers = calc.calculate_best_offer_prices(list_price)
+    
+    logger.info('')
+    logger.info('=== PRICING RESULTS (10% Markup) ===')
+    logger.info(f'Median Price: ${median:.2f}')
+    logger.info(f'List Price: ${list_price:.2f}')
+    logger.info(f'Auto-Accept Offer (80%): ${offers["auto_accept"]:.2f} -> Profit: ${offers["profit_auto_accept"]:.2f}')
+    logger.info(f'Minimum Ask (70%): ${offers["minimum"]:.2f} -> Profit: ${offers["profit_minimum"]:.2f}')
+    logger.info(f'Meets $2.75 Minimum: {offers["meets_margin_threshold"]}')
+    
+    matrix = calc.generate_pricing_matrix(median)
+    import json
+    logger.info('')
+    logger.info('=== FULL PRICING MATRIX ===')
+    logger.info(json.dumps(matrix, indent=2))
+
+if __name__ == '__main__':
+    main()
