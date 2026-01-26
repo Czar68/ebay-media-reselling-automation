@@ -173,31 +173,66 @@ def log_airtable_update(table_name, record_id, fields, success=False):
 
 
 # =============================================================================
-# Legacy Airtable Webhook (Phase 1 compatibility)
+# Legacy Airtable Webhook (Phase 1 compatibility) - IMPROVED ROBUSTNESS
 # =============================================================================
 @app.route('/webhook/airtable', methods=['POST'])
 def airtable_webhook():
-    """Handle webhook from Airtable automation"""
+    """Handle webhook from Airtable automation - supports both JSON and form-encoded"""
     
     try:
-        data = request.json
+        # Log the incoming request for debugging
+        debug_logger.info(f"Webhook received - Content-Type: {request.content_type}")
+        debug_logger.debug(f"Request headers: {dict(request.headers)}")
+        
+        # Handle both JSON and form-encoded payloads
+        if request.is_json:
+            data = request.json
+            debug_logger.debug(f"Parsed JSON payload: {data}")
+        elif request.form:
+            data = request.form.to_dict()
+            debug_logger.debug(f"Parsed form payload: {data}")
+        else:
+            # Try to parse raw data as JSON
+            try:
+                data = json.loads(request.data.decode('utf-8'))
+                debug_logger.debug(f"Parsed raw JSON payload: {data}")
+            except:
+                log_error_context('WebhookException', 'Could not parse request body', 
+                    {'content_type': request.content_type, 'data': request.data.decode('utf-8', errors='ignore')})
+                return jsonify({'error': 'Invalid request format. Expected JSON or form data.'}), 400
+        
+        # Extract required fields
         record_id = data.get('record_id')
         image_url = data.get('image_url')
         
+        debug_logger.info(f"Webhook processing - Record: {record_id}, Image URL: {image_url}")
+        
         if not record_id or not image_url:
+            log_error_context('WebhookException', 'Missing required fields',
+                {'record_id': record_id, 'image_url': image_url})
             return jsonify({'error': 'Missing required fields: record_id and image_url'}), 400
         
         # Step 1: Analyze the disc image
+        debug_logger.info(f"Starting image analysis for record {record_id}")
         analysis_result = analyze_disc_image(image_url)
         
         if 'error' in analysis_result:
+            log_error_context('AnalysisError', 'Image analysis failed',
+                {'record_id': record_id, 'error': analysis_result.get('error')})
             return jsonify({'error': 'Image analysis failed', 'details': analysis_result}), 500
         
+        debug_logger.debug(f"Analysis successful: {list(analysis_result.keys())}")
+        
         # Step 2: Update Airtable with extracted data
+        debug_logger.info(f"Updating Airtable record {record_id}")
         update_result = update_airtable_record(record_id, analysis_result)
         
         if 'error' in update_result:
+            log_error_context('UpdateError', 'Airtable update failed',
+                {'record_id': record_id, 'error': update_result.get('error')})
             return jsonify({'error': 'Airtable update failed', 'details': update_result}), 500
+        
+        debug_logger.info(f"✓ Successfully processed webhook for record {record_id}")
         
         return jsonify({
             'success': True,
@@ -207,7 +242,7 @@ def airtable_webhook():
         }), 200
         
     except Exception as e:
-        log_error_context('WebhookException', str(e))
+        log_error_context('WebhookException', str(e), {'request_data': request.data.decode('utf-8', errors='ignore')})
         return jsonify({'error': str(e)}), 500
 
 
